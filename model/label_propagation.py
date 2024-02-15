@@ -1,13 +1,21 @@
 import numpy as np
 from scipy.sparse import diags
 
-def label_propagation(X, Y, alpha, sigma, max_iter=100, tol=1e-4):
+def calculate_adjacency_matrix(X, sigma):
+    n = X.shape[0]
+    W = np.zeros((n, n))
+    for i in range(n):
+        for j in range(n):
+            W[i][j] = np.exp(-np.square(np.linalg.norm(X[i] - X[j], axis=0)) / sigma ** 2)
+    return W
+
+def label_propagation(X, Y, l, alpha, sigma):
     n, D = X.shape
-    l, C = Y.shape
+    C = Y.shape[1]
     u = n - l
 
     # Step 1: Construct neighborhood graph
-    W = np.exp(-np.square(np.linalg.norm(X[:, np.newaxis] - X, axis=2)) / (2 * sigma**2))
+    W = calculate_adjacency_matrix(X, sigma)
 
     # Step 2: Symmetrically normalize adjacency matrix
     D = diags(np.sum(W, axis=1))
@@ -15,29 +23,26 @@ def label_propagation(X, Y, alpha, sigma, max_iter=100, tol=1e-4):
     W_hat = D_sqrt_inv @ W @ D_sqrt_inv
 
     # Step 3: Calculate stochastic matrix
-    T = D_sqrt_inv @ W @ D_sqrt_inv
-
+    T = D_sqrt_inv @ W_hat
+    I = np.identity(n=T.shape[0])
     # Step 4: Compute soft labels iteratively
-    F = np.zeros((n, C))
-    F[:l] = Y
-    F_new = F.copy()
-
-    for _ in range(max_iter):
-        F = F_new.copy()
-        F_new = alpha * T @ F + (1 - alpha) * Y
-
-        if np.linalg.norm(F_new - F) < tol:
-            break
-
+    # F = np.zeros((n, C))
+    F = np.linalg.inv((I - alpha * T)) @ (I - alpha * I) @ Y
     # Step 4 (continued): Convert soft labels to hard labels
-    Y_hat = np.where(F_new > 0.5, 1, 0)
+    Y_tilda = np.zeros((n, C))
+    Y_tilda[:l] = Y[:l]
+    Y_tilda[l:] = np.where(F[l:] > 0.5, 1, F[l:])
+    return Y_tilda, F
 
-    return Y_hat
 
-# Example usage
-X = np.random.rand(100, 10)  # Input data points
-Y = np.random.randint(0, 2, size=(80, 5))  # Known labels
-alpha = 0.8  # Hyperparameter for label propagation
-sigma = 0.5  # Hyperparameter for neighborhood graph
+from dataset.datasets import create_dataset, make_labels_to_semi_supervised_task
 
-Y_hat = label_propagation(X, Y, alpha, sigma)
+train_dataset, train_labels, test_dataset, test_labels = create_dataset()
+semi_supervised_labels, l = make_labels_to_semi_supervised_task(train_labels, 0.3)
+Y_, F = label_propagation(train_dataset, semi_supervised_labels, l, alpha=0.6, sigma=1)
+
+np.save('Y_tilda.npy', Y_)
+np.save('train_dataset.npy', train_dataset)
+np.save('train_labels.npy', train_labels)
+np.save('test_dataset.npy', test_dataset)
+np.save('test_labels.npy', test_labels)
